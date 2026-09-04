@@ -1,27 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import PlateChart from "./PlateChart";
+import PlateChart, { PlateTask } from "./PlateChart";
 import { computeOpacity } from "@/lib/opacity";
-
-type Task = {
-  id: string;
-  name: string;
-  platePercent: number;
-  isRecurring: boolean;
-  startDate: string | Date;
-  dueDate?: string | Date | null;
-  manualProgress: number;
-  color: string;
-};
 
 type Member = {
   id: string;
   name: string;
   capacityPercent: number;
-  tasks: Task[];
+  tasks: PlateTask[];
 };
 
 type Props = {
@@ -37,67 +24,142 @@ function formatDate(d: string | Date | null | undefined) {
 
 export default function MemberPlate({ member, previewTask, onAddTask }: Props) {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
-  const totalUsed = member.tasks.reduce((sum, t) => sum + t.platePercent, 0);
+
+  const totalUsed = member.tasks.reduce((s, t) => s + t.platePercent, 0);
+  const loadPct = Math.round((totalUsed / member.capacityPercent) * 100);
   const remaining = member.capacityPercent - totalUsed;
-  const hoveredTask = member.tasks.find((t) => t.id === hoveredTaskId);
+  const isOver = loadPct > 100;
+
+  const hintText = isOver
+    ? `Over by ${loadPct - 100}%`
+    : loadPct <= 60
+    ? "Room for more"
+    : `${Math.max(0, remaining)}% free`;
+
+  const hintColor = isOver
+    ? "oklch(0.68 0.18 25)"
+    : loadPct <= 60
+    ? "oklch(0.80 0.13 172)"
+    : "rgba(237,237,240,.4)";
 
   return (
-    <Card className="w-64 flex-shrink-0">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">{member.name}</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          {totalUsed}% used · {Math.max(0, remaining)}% free
-        </p>
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-4">
-        <div className="relative">
-          <PlateChart
-            tasks={member.tasks}
-            capacityPercent={member.capacityPercent}
-            previewTask={previewTask}
-            hoveredTaskId={hoveredTaskId}
-            onHoverTask={setHoveredTaskId}
-          />
-          {hoveredTask && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-[70px] z-10 w-44 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs pointer-events-none">
-              <p className="font-semibold text-sm mb-1">{hoveredTask.name}</p>
-              <p className="text-muted-foreground">{hoveredTask.platePercent}% of plate</p>
-              {hoveredTask.dueDate && (
-                <p className="text-muted-foreground">Due {formatDate(hoveredTask.dueDate)}</p>
-              )}
-              <p className="text-muted-foreground">
-                Progress: {Math.round(hoveredTask.manualProgress * 100)}%
-              </p>
-              <p className="text-muted-foreground">
-                Opacity: {Math.round(computeOpacity(hoveredTask) * 100)}%
-              </p>
-              {hoveredTask.isRecurring && <Badge variant="secondary" className="mt-1 text-xs">Recurring</Badge>}
-            </div>
-          )}
-        </div>
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,.06)",
+        borderRadius: 18,
+        padding: "20px 16px 16px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 2,
+        background: "linear-gradient(180deg,rgba(255,255,255,.022),transparent)",
+        width: 200,
+        flexShrink: 0,
+      }}
+    >
+      <PlateChart
+        tasks={member.tasks}
+        capacityPercent={member.capacityPercent}
+        size={180}
+        previewTask={previewTask}
+        hoveredTaskId={hoveredTaskId}
+        onHoverTask={setHoveredTaskId}
+      />
 
-        <div className="w-full space-y-1">
-          {member.tasks.map((task) => (
-            <div key={task.id} className="flex items-center gap-2 text-xs">
-              <span
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: task.color, opacity: computeOpacity(task) }}
-              />
-              <span className="flex-1 truncate">{task.name}</span>
-              <span className="text-muted-foreground flex-shrink-0">{task.platePercent}%</span>
-            </div>
-          ))}
+      <div style={{ marginTop: 14, textAlign: "center" }}>
+        <div style={{ font: "600 14px/1.2 'Instrument Sans',sans-serif", color: "#ededf0" }}>
+          {member.name}
         </div>
+      </div>
 
-        {onAddTask && (
-          <button
-            onClick={onAddTask}
-            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1"
-          >
-            + Add task
-          </button>
-        )}
-      </CardContent>
-    </Card>
+      <div style={{ height: 22, display: "flex", alignItems: "center", marginTop: 6 }}>
+        <div style={{ font: "400 11px/1.3 'Instrument Sans',sans-serif", color: hintColor, textAlign: "center" }}>
+          {hintText}
+        </div>
+      </div>
+
+      {member.tasks.length > 0 && (
+        <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 2, marginTop: 10 }}>
+          {member.tasks.map((task) => {
+            const isHovered = hoveredTaskId === task.id;
+            const fill = task.isRecurring ? "oklch(0.72 0.12 214)" : task.color;
+            const op = computeOpacity(task);
+            return (
+              <div
+                key={task.id}
+                onMouseEnter={() => setHoveredTaskId(task.id)}
+                onMouseLeave={() => setHoveredTaskId(null)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "14px 1fr auto",
+                  gap: 10,
+                  alignItems: "center",
+                  padding: "9px 10px",
+                  borderRadius: 10,
+                  border: "1px solid",
+                  borderColor: isHovered ? "rgba(255,255,255,.08)" : "transparent",
+                  background: isHovered ? "rgba(255,255,255,.04)" : "transparent",
+                  cursor: "default",
+                  transition: "background .18s ease, border-color .18s ease",
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: task.isRecurring ? 2 : "50%",
+                    background: fill,
+                    opacity: op + 0.15,
+                    display: "block",
+                    flexShrink: 0,
+                  }}
+                />
+                <div>
+                  <div style={{ font: "500 12px/1.25 'Instrument Sans',sans-serif", color: "#ededf0" }}>
+                    {task.name}
+                  </div>
+                  {isHovered && (
+                    <div style={{ font: "400 10px/1 'JetBrains Mono',monospace", color: "rgba(237,237,240,.36)", marginTop: 5, animation: "rowIn .18s ease both" }}>
+                      {task.isRecurring
+                        ? "recurring · reserved"
+                        : `due ${formatDate(task.dueDate) ?? "—"} · ${Math.round(task.manualProgress * 100)}% done`}
+                    </div>
+                  )}
+                </div>
+                <div style={{ font: "500 11px/1 'JetBrains Mono',monospace", color: "rgba(237,237,240,.6)" }}>
+                  {task.platePercent}%
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {onAddTask && (
+        <button
+          onClick={onAddTask}
+          style={{
+            marginTop: 12,
+            font: "500 11.5px 'Instrument Sans',sans-serif",
+            color: "oklch(0.78 0.17 287)",
+            background: "transparent",
+            border: "1px solid rgba(255,255,255,.09)",
+            borderRadius: 8,
+            padding: "7px 14px",
+            cursor: "pointer",
+            transition: "background .18s ease, border-color .18s ease",
+            width: "100%",
+          }}
+          onMouseEnter={(e) => {
+            (e.target as HTMLButtonElement).style.background = "rgba(255,255,255,.04)";
+          }}
+          onMouseLeave={(e) => {
+            (e.target as HTMLButtonElement).style.background = "transparent";
+          }}
+        >
+          + Add task
+        </button>
+      )}
+    </div>
   );
 }

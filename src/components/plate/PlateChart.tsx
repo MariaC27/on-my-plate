@@ -2,7 +2,7 @@
 
 import { computeOpacity } from "@/lib/opacity";
 
-type Task = {
+export type PlateTask = {
   id: string;
   name: string;
   platePercent: number;
@@ -14,7 +14,7 @@ type Task = {
 };
 
 type Props = {
-  tasks: Task[];
+  tasks: PlateTask[];
   capacityPercent: number;
   size?: number;
   previewTask?: { name: string; platePercent: number; color: string } | null;
@@ -22,121 +22,216 @@ type Props = {
   onHoverTask?: (id: string | null) => void;
 };
 
-function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+const CX = 140, CY = 140;
+const R0 = 64, R1 = 118;
+const GAP = 0.0042;
+const ACCENT = "oklch(0.62 0.22 287)";
+const COOL   = "oklch(0.72 0.12 214)";
+const DANGER = "oklch(0.68 0.18 25)";
+
+function ptAt(r: number, f: number): [number, number] {
+  const a = (f * 360 - 90) * (Math.PI / 180);
+  return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
 }
 
-function wedgePath(cx: number, cy: number, r: number, startDeg: number, endDeg: number): string {
-  const start = polarToCartesian(cx, cy, r, startDeg);
-  const end = polarToCartesian(cx, cy, r, endDeg);
-  const large = endDeg - startDeg > 180 ? 1 : 0;
-  return [
-    `M ${cx} ${cy}`,
-    `L ${start.x} ${start.y}`,
-    `A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`,
-    "Z",
-  ].join(" ");
+function annularSeg(r0: number, r1: number, f0: number, f1: number): string {
+  if (f1 - f0 <= 0.0005) return "";
+  const [x1, y1] = ptAt(r1, f0), [x2, y2] = ptAt(r1, f1);
+  const [x3, y3] = ptAt(r0, f1), [x4, y4] = ptAt(r0, f0);
+  const laf = f1 - f0 > 0.5 ? 1 : 0;
+  const n = (v: number) => Math.round(v * 100) / 100;
+  return `M${n(x1)} ${n(y1)}A${r1} ${r1} 0 ${laf} 1 ${n(x2)} ${n(y2)}L${n(x3)} ${n(y3)}A${r0} ${r0} 0 ${laf} 0 ${n(x4)} ${n(y4)}Z`;
 }
 
 export default function PlateChart({
   tasks,
   capacityPercent,
-  size = 240,
+  size = 220,
   previewTask,
   hoveredTaskId,
   onHoverTask,
 }: Props) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size / 2 - 8;
+  const totalUsed = tasks.reduce((s, t) => s + t.platePercent, 0);
+  const rawPct = totalUsed / capacityPercent;
+  const loadPct = Math.round(rawPct * 100);
+  const isOver = loadPct > 100;
 
-  const totalUsed = tasks.reduce((sum, t) => sum + t.platePercent, 0);
-  const previewPct = previewTask?.platePercent ?? 0;
-  const totalWithPreview = Math.min(totalUsed + previewPct, capacityPercent);
+  const loadColor = isOver
+    ? DANGER
+    : loadPct >= 90
+    ? "oklch(0.78 0.17 287)"
+    : "#ededf0";
 
-  let cursor = 0;
-  const wedges: Array<{
-    id: string;
+  type Wedge = {
+    key: string;
+    taskId: string;
     path: string;
-    color: string;
+    fill: string;
+    stroke: string;
+    dashArray: string;
     opacity: number;
-    isPreview?: boolean;
-    task?: Task;
-  }> = [];
+    dx: number;
+    dy: number;
+    interactive: boolean;
+    animDelay: number;
+  };
 
-  for (const task of tasks) {
-    const pct = Math.min(task.platePercent, capacityPercent - cursor);
-    if (pct <= 0) break;
-    const startDeg = (cursor / capacityPercent) * 360;
-    const endDeg = ((cursor + pct) / capacityPercent) * 360;
-    wedges.push({
-      id: task.id,
-      path: wedgePath(cx, cy, r, startDeg, endDeg),
-      color: task.color,
-      opacity: computeOpacity(task),
-      task,
-    });
-    cursor += pct;
+  const wedges: Wedge[] = [];
+  let cursor = 0;
+
+  tasks.forEach((task, i) => {
+    const f0 = cursor / capacityPercent;
+    const f1raw = (cursor + task.platePercent) / capacityPercent;
+    const f1clamped = Math.min(1, f1raw);
+    const isHovered = hoveredTaskId === task.id;
+    const mid = (f0 + Math.min(f1clamped, 1)) / 2;
+    const midAngle = (mid * 360 - 90) * (Math.PI / 180);
+    const dx = isHovered ? 7 * Math.cos(midAngle) : 0;
+    const dy = isHovered ? 7 * Math.sin(midAngle) : 0;
+    const fill = task.isRecurring ? COOL : task.color;
+    const opacity = computeOpacity(task);
+
+    if (f0 < 1) {
+      const path = annularSeg(R0, R1, f0, Math.min(f1clamped, 1) - GAP);
+      if (path) {
+        wedges.push({
+          key: task.id,
+          taskId: task.id,
+          path,
+          fill,
+          stroke: task.isRecurring ? fill : "transparent",
+          dashArray: task.isRecurring ? "4 3" : "none",
+          opacity,
+          dx, dy,
+          interactive: true,
+          animDelay: i * 70,
+        });
+      }
+    }
+
+    if (f1raw > 1) {
+      const overPath = annularSeg(124, 136, Math.max(0, f0 - 1), f1raw - 1 - GAP);
+      if (overPath) {
+        wedges.push({
+          key: task.id + "_over",
+          taskId: task.id,
+          path: overPath,
+          fill: DANGER,
+          stroke: DANGER,
+          dashArray: "none",
+          opacity: 0.85,
+          dx: 0, dy: 0,
+          interactive: false,
+          animDelay: i * 70,
+        });
+      }
+    }
+
+    cursor += task.platePercent;
+  });
+
+  const freeStart = Math.min(totalUsed, capacityPercent) / capacityPercent;
+  const freeArc = freeStart < 1 ? annularSeg(R0, R1, freeStart, 1) : "";
+
+  const previewTotal = totalUsed + (previewTask?.platePercent ?? 0);
+  const previewPct = Math.round((previewTotal / capacityPercent) * 100);
+  const previewLoadColor = previewPct > 100
+    ? DANGER
+    : previewPct >= 90
+    ? "oklch(0.78 0.17 287)"
+    : "#ededf0";
+
+  let ghostPath = "";
+  if (previewTask && previewTask.platePercent > 0) {
+    const gf0 = Math.min(1, totalUsed / capacityPercent);
+    const gf1 = Math.min(1, previewTotal / capacityPercent) - GAP;
+    if (gf1 > gf0) ghostPath = annularSeg(R0, R1, gf0, gf1);
   }
 
-  if (previewTask && previewPct > 0 && cursor < capacityPercent) {
-    const available = capacityPercent - cursor;
-    const pct = Math.min(previewPct, available);
-    const startDeg = (cursor / capacityPercent) * 360;
-    const endDeg = ((cursor + pct) / capacityPercent) * 360;
-    wedges.push({
-      id: "preview",
-      path: wedgePath(cx, cy, r, startDeg, endDeg),
-      color: previewTask.color,
-      opacity: 0.4,
-      isPreview: true,
-    });
-  }
-
-  const remainingPct = capacityPercent - totalWithPreview;
-  if (remainingPct > 0) {
-    const startDeg = (totalWithPreview / capacityPercent) * 360;
-    const endDeg = 360;
-    wedges.push({
-      id: "remaining",
-      path: wedgePath(cx, cy, r, startDeg, endDeg),
-      color: "#e5e7eb",
-      opacity: 1,
-    });
-  }
+  const displayPct = previewTask ? previewPct : loadPct;
+  const displayColor = previewTask ? previewLoadColor : loadColor;
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={cx} cy={cy} r={r + 6} fill="white" stroke="#e5e7eb" strokeWidth={2} />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 280 280"
+      style={{ display: "block", overflow: "visible" }}
+    >
+      {/* Guide rings */}
+      <circle cx={CX} cy={CY} r={119} fill="none" stroke="rgba(255,255,255,.085)" strokeWidth={1} />
+      <circle cx={CX} cy={CY} r={63}  fill="none" stroke="rgba(255,255,255,.07)"  strokeWidth={1} />
+      <circle cx={CX} cy={CY} r={128} fill="none" stroke="rgba(255,255,255,.16)"  strokeWidth={2}
+        strokeDasharray="2 37.6" strokeLinecap="round" />
+
+      {/* Free arc */}
+      {freeArc && (
+        <path
+          d={freeArc}
+          fill="rgba(255,255,255,.035)"
+          stroke="rgba(255,255,255,.09)"
+          strokeWidth={1}
+          strokeDasharray="3 4"
+        />
+      )}
+
+      {/* Task wedges */}
       {wedges.map((w) => (
         <path
-          key={w.id}
+          key={w.key}
           d={w.path}
-          fill={w.color}
-          fillOpacity={w.opacity}
-          stroke="white"
-          strokeWidth={2}
-          strokeDasharray={w.isPreview ? "6 3" : undefined}
-          style={{ cursor: w.task ? "pointer" : "default", transition: "fill-opacity 0.3s" }}
-          onMouseEnter={() => w.task && onHoverTask?.(w.id)}
+          fill={w.fill}
+          stroke={w.stroke}
+          strokeDasharray={w.dashArray}
+          strokeWidth={1}
+          style={{
+            opacity: w.opacity,
+            transform: (w.dx || w.dy) ? `translate(${w.dx.toFixed(2)}px,${w.dy.toFixed(2)}px)` : undefined,
+            filter: hoveredTaskId === w.taskId ? `drop-shadow(0 0 16px ${w.fill})` : undefined,
+            cursor: w.interactive ? "pointer" : "default",
+            transition: "opacity 0.3s ease, filter 0.2s ease, transform 0.25s cubic-bezier(.2,.9,.2,1)",
+          }}
+          onMouseEnter={() => w.interactive && onHoverTask?.(w.taskId)}
           onMouseLeave={() => onHoverTask?.(null)}
-          opacity={hoveredTaskId && hoveredTaskId !== w.id ? 0.6 : 1}
         />
       ))}
-      <circle cx={cx} cy={cy} r={r * 0.38} fill="white" />
+
+      {/* Preview ghost */}
+      {ghostPath && (
+        <path
+          d={ghostPath}
+          fill={previewPct > 100 ? "oklch(0.68 0.18 25 / .18)" : "oklch(0.62 0.22 287 / .22)"}
+          stroke={previewPct > 100 ? DANGER : ACCENT}
+          strokeWidth={1.5}
+          strokeDasharray="5 4"
+          style={{ animation: "ghostPulse 2.4s ease-in-out infinite" }}
+        />
+      )}
+
+      {/* Center percentage */}
       <text
-        x={cx}
-        y={cy - 6}
+        x={CX}
+        y={CY - 5}
         textAnchor="middle"
-        fontSize={18}
-        fontWeight="600"
-        fill="#111827"
+        fontSize={27}
+        fontFamily="'JetBrains Mono', monospace"
+        fontWeight="500"
+        fill={displayColor}
+        letterSpacing="-0.02em"
       >
-        {Math.min(totalUsed, capacityPercent)}%
+        {displayPct}
+        <tspan fontSize={13} opacity={0.5}>%</tspan>
       </text>
-      <text x={cx} y={cy + 12} textAnchor="middle" fontSize={11} fill="#6b7280">
-        of {capacityPercent}%
+      <text
+        x={CX}
+        y={CY + 14}
+        textAnchor="middle"
+        fontSize={9.5}
+        fontFamily="'JetBrains Mono', monospace"
+        fill="rgba(237,237,240,.34)"
+        letterSpacing="0.1em"
+      >
+        {isOver ? "OVER" : "FULL"}
       </text>
     </svg>
   );

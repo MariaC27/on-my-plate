@@ -4,7 +4,7 @@ export function computeOpacity(task: {
   dueDate?: string | Date | null;
   manualProgress: number;
 }): number {
-  if (task.isRecurring) return 1;
+  if (task.isRecurring) return 0.42;
 
   const now = Date.now();
   const start = new Date(task.startDate).getTime();
@@ -18,5 +18,5 @@ export function computeOpacity(task: {
   }
 
   const progress = Math.max(timeProgress, task.manualProgress);
-  return Math.max(0.15, 1 - progress);
+  return Math.max(0.28, 0.94 - 0.66 * progress);
 }
